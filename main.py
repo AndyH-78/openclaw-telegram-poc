@@ -80,6 +80,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await status_msg.edit_text(f"Fehler bei Wetteronline: {str(e)}")
         return
+    # NEUER BEFEHL: Link-Zusammenfassung
+    if user_input.startswith("http"):
+        url = user_input.strip()
+        status_msg = await update.message.reply_text(f"🔍 Lese Seite: {url}...")
+        
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context_browser = await browser.new_context(
+                viewport={'width': 1280, 'height': 800},
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            )
+            page = await context_browser.new_page()
+            
+            try:
+                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                await asyncio.sleep(2) # Kurz warten für dynamische Texte
+                content = await page.inner_text("body")
+                await browser.close()
+                
+                await status_msg.edit_text("🧠 Qwen erstellt Zusammenfassung...")
+                
+                prompt = f"""
+                Lies den folgenden Text einer Webseite und fasse die wichtigsten 3-5 Kernaussagen zusammen. 
+                Antworte kurz und prägnant in Bulletpoints auf Deutsch.
+                
+                TEXT:
+                {content[:7000]}
+                """
+                
+                response = ollama.chat(model='qwen2.5-coder:7b', messages=[
+                    {'role': 'user', 'content': prompt},
+                ])
+                
+                await status_msg.edit_text(f"📄 **Zusammenfassung:**\n\n{response['message']['content']}")
+                
+            except Exception as e:
+                await status_msg.edit_text(f"Fehler beim Lesen der Seite: {str(e)}")
+        return
 
     # NORMALER CHAT (Ollama)
     status_msg = await update.message.reply_text("🤖 Überlege...")
