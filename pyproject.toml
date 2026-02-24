@@ -1,0 +1,12 @@
+[project]
+name = "openclaw-telegram-poc"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ollama>=0.6.1",
+    "playwright>=1.58.0",
+    "python-dotenv>=1.2.1",
+    "python-telegram-bot>=22.6",
+]
