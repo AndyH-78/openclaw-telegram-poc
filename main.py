@@ -9,9 +9,9 @@ from playwright.async_api import async_playwright
 # Lade Token aus der .env Datei
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-# DEINE USER ID (Hier wieder deine Nummer eintragen!)
-AUTHORIZED_USER_ID = 334453718
+# Wir laden die ID und wandeln sie in ein Integer um (falls vorhanden)
+user_id_env = os.getenv("AUTHORIZED_USER_ID")
+AUTHORIZED_USER_ID = int(user_id_env) if user_id_env else None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -80,10 +80,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await status_msg.edit_text(f"Fehler bei Wetteronline: {str(e)}")
         return
-    # NEUER BEFEHL: Link-Zusammenfassung
+    # BEFEHL: Link-Zusammenfassung + Screenshot
     if user_input.startswith("http"):
         url = user_input.strip()
-        status_msg = await update.message.reply_text(f"🔍 Lese Seite: {url}...")
+        status_msg = await update.message.reply_text(f"📸 Besuche Seite...")
         
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -95,28 +95,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             try:
                 await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                await asyncio.sleep(2) # Kurz warten für dynamische Texte
+                await asyncio.sleep(2)
+                
+                # Screenshot machen
+                screenshot_path = "summary_snap.png"
+                await page.screenshot(path=screenshot_path, full_page=False) # Nur den "First Fold"
+                
                 content = await page.inner_text("body")
                 await browser.close()
                 
-                await status_msg.edit_text("🧠 Qwen erstellt Zusammenfassung...")
+                await status_msg.edit_text("🧠 Qwen analysiert den Inhalt...")
                 
-                prompt = f"""
-                Lies den folgenden Text einer Webseite und fasse die wichtigsten 3-5 Kernaussagen zusammen. 
-                Antworte kurz und prägnant in Bulletpoints auf Deutsch.
-                
-                TEXT:
-                {content[:7000]}
-                """
+                prompt = f"Fasse die 3 wichtigsten Kernaussagen dieser Seite kurz zusammen:\n\n{content[:7000]}"
                 
                 response = ollama.chat(model='qwen2.5-coder:7b', messages=[
                     {'role': 'user', 'content': prompt},
                 ])
                 
-                await status_msg.edit_text(f"📄 **Zusammenfassung:**\n\n{response['message']['content']}")
+                # Zuerst das Foto senden, dann die Zusammenfassung
+                await update.message.reply_photo(
+                    photo=open(screenshot_path, 'rb'), 
+                    caption=f"📄 **Zusammenfassung von {url}**:\n\n{response['message']['content']}"
+                )
+                await status_msg.delete()
                 
             except Exception as e:
-                await status_msg.edit_text(f"Fehler beim Lesen der Seite: {str(e)}")
+                await status_msg.edit_text(f"Fehler: {str(e)}")
         return
 
     # NORMALER CHAT (Ollama)
