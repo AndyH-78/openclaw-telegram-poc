@@ -6,10 +6,9 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
-# Lade Token aus der .env Datei
+# 1. Konfiguration laden
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-# Wir laden die ID und wandeln sie in ein Integer um (falls vorhanden)
 user_id_env = os.getenv("AUTHORIZED_USER_ID")
 AUTHORIZED_USER_ID = int(user_id_env) if user_id_env else None
 
@@ -18,112 +17,111 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if AUTHORIZED_USER_ID and user_id != AUTHORIZED_USER_ID:
         await update.message.reply_text("Zugriff verweigert.")
         return
-    await update.message.reply_text(f"Hallo Andreas! Dein Wetter-Agent ist bereit. ID: {user_id}")
+    await update.message.reply_text(f"Hallo Andreas! Dein M4 Max Agent ist bereit. ID: {user_id}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    # Validierung
     if AUTHORIZED_USER_ID and user_id != AUTHORIZED_USER_ID:
         return
 
     user_input = update.message.text
-    
-    # BEFEHL: Wetter-Extraktion für Wetteronline.de
-    if user_input.lower().startswith("wetter "):
-        stadt = user_input.split(" ", 1)[1]
-        # Wetteronline nutzt oft dieses Format für die Suche
-        url = f"https://www.wetteronline.de/wetter/{stadt}"
-        
-        status_msg = await update.message.reply_text(f"🌦️ Suche auf Wetteronline für {stadt}...")
-        
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context_browser = await browser.new_context(
-                viewport={'width': 1280, 'height': 800},
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            )
-            page = await context_browser.new_page()
-            
-            try:
-                # Wir gehen direkt auf die Seite
-                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                
-                # Kurze Pause, damit die Wetterdaten (Zahlen) geladen werden
-                await asyncio.sleep(4) 
-                
-                # Wir holen uns den Text. 
-                # Tipp: Oft reicht es, nur den "main" oder "content" Bereich zu lesen,
-                # um Werbung in der Sidebar zu ignorieren. Wir nehmen hier 'body'.
-                content = await page.inner_text("body")
-                await browser.close()
-                
-                await status_msg.edit_text("🧠 Qwen analysiert jetzt die Wetteronline-Daten...")
-                
-                prompt = f"""
-                Analysiere den folgenden Text einer Wetterseite für {stadt}.
-                Suche nach:
-                1. Aktuelle Temperatur
-                2. Wetterzustand (z.B. wolkig, Regen)
-                3. Höchst-/Tiefstwert für heute (falls gefunden)
-                
-                Antworte in einem lockeren, freundlichen Ton für Andreas.
-                
-                TEXT:
-                {content[:5000]}
-                """
-                
-                response = ollama.chat(model='qwen2.5-coder:7b', messages=[
-                    {'role': 'user', 'content': prompt},
-                ])
-                
-                await status_msg.edit_text(response['message']['content'])
-                
-            except Exception as e:
-                await status_msg.edit_text(f"Fehler bei Wetteronline: {str(e)}")
-        return
-    # BEFEHL: Link-Zusammenfassung + Screenshot
-    if user_input.startswith("http"):
-        url = user_input.strip()
-        status_msg = await update.message.reply_text(f"📸 Besuche Seite...")
-        
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context_browser = await browser.new_context(
-                viewport={'width': 1280, 'height': 800},
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            )
-            page = await context_browser.new_page()
-            
-            try:
-                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                await asyncio.sleep(2)
-                
-                # Screenshot machen
-                screenshot_path = "summary_snap.png"
-                await page.screenshot(path=screenshot_path, full_page=False) # Nur den "First Fold"
-                
-                content = await page.inner_text("body")
-                await browser.close()
-                
-                await status_msg.edit_text("🧠 Qwen analysiert den Inhalt...")
-                
-                prompt = f"Fasse die 3 wichtigsten Kernaussagen dieser Seite kurz zusammen:\n\n{content[:7000]}"
-                
-                response = ollama.chat(model='qwen2.5-coder:7b', messages=[
-                    {'role': 'user', 'content': prompt},
-                ])
-                
-                # Zuerst das Foto senden, dann die Zusammenfassung
-                await update.message.reply_photo(
-                    photo=open(screenshot_path, 'rb'), 
-                    caption=f"📄 **Zusammenfassung von {url}**:\n\n{response['message']['content']}"
-                )
-                await status_msg.delete()
-                
-            except Exception as e:
-                await status_msg.edit_text(f"Fehler: {str(e)}")
+    if not user_input:
         return
 
-    # NORMALER CHAT (Ollama)
+    # --- FEATURE: WETTER ---
+    if user_input.lower().startswith("wetter "):
+        stadt = user_input.split(" ", 1)[1]
+        url = f"https://www.wetteronline.de/wetter/{stadt}"
+        status_msg = await update.message.reply_text(f"🌦️ Suche Wetter für {stadt}...")
+        
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context_browser = await browser.new_context(user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+            page = await context_browser.new_page()
+            try:
+                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                await asyncio.sleep(3) 
+                content = await page.inner_text("body")
+                await browser.close()
+                prompt = f"Extrahiere Temperatur und Wetter für {stadt} aus:\n{content[:4000]}"
+                response = ollama.chat(model='qwen2.5-coder:7b', messages=[{'role': 'user', 'content': prompt}])
+                await status_msg.edit_text(response['message']['content'])
+            except Exception as e:
+                await status_msg.edit_text(f"Wetter-Fehler: {str(e)}")
+        return
+
+    # --- FEATURE: AUTONOMER RECHERCHE-AGENT ---
+    if user_input.lower().startswith("suche "):
+        anfrage = user_input[6:]
+        status_msg = await update.message.reply_text("🧠 Überlege Quellen...")
+
+        planner_prompt = f"Der User möchte wissen: '{anfrage}'. Nenne mir die 2 besten deutschen News-Webseiten-URLs (z.B. heise.de, spiegel.de). Antworte NUR mit den URLs, getrennt durch ein Komma."
+        
+        try:
+            planner_res = ollama.chat(model='qwen2.5-coder:7b', messages=[{'role': 'user', 'content': planner_prompt}])
+            urls = [u.strip() for u in planner_res['message']['content'].split(",")]
+            await status_msg.edit_text(f"🚀 Recherchiere auf: {', '.join(urls)}...")
+
+            results_text = ""
+            screenshots = []
+
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                context_browser = await browser.new_context(user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+                
+                for i, url in enumerate(urls):
+                    if not url.startswith("http"): url = "https://" + url
+                    page = await context_browser.new_page()
+                    try:
+                        await page.goto(url, timeout=25000, wait_until="domcontentloaded")
+                        await asyncio.sleep(2)
+                        snap_path = f"recherche_{i}.png"
+                        await page.screenshot(path=snap_path)
+                        screenshots.append(snap_path)
+                        content = await page.inner_text("body")
+                        results_text += f"\n--- Quelle {url} ---\n{content[:3000]}\n"
+                        await page.close()
+                    except:
+                        continue
+                await browser.close()
+
+            final_prompt = f"Beantworte kurz die Frage: '{anfrage}' basierend auf diesen Texten:\n\n{results_text}"
+            final_res = ollama.chat(model='qwen2.5-coder:7b', messages=[{'role': 'user', 'content': final_prompt}])
+            
+            for snap in screenshots:
+                await update.message.reply_photo(photo=open(snap, 'rb'))
+            await update.message.reply_text(f"✅ **Ergebnis:**\n\n{final_res['message']['content']}")
+            await status_msg.delete()
+        except Exception as e:
+            await status_msg.edit_text(f"Recherche-Fehler: {str(e)}")
+        return
+
+    # --- FEATURE: LINK-ZUSAMMENFASSUNG ---
+    if user_input.startswith("http"):
+        url = user_input.strip()
+        status_msg = await update.message.reply_text("📸 Analysiere Link...")
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            try:
+                await page.goto(url, timeout=30000)
+                await asyncio.sleep(2)
+                screenshot_path = "summary_snap.png"
+                await page.screenshot(path=screenshot_path)
+                content = await page.inner_text("body")
+                await browser.close()
+                prompt = f"Fasse diesen Artikel in 3 Sätzen zusammen:\n\n{content[:6000]}"
+                response = ollama.chat(model='qwen2.5-coder:7b', messages=[{'role': 'user', 'content': prompt}])
+                summary = response['message']['content']
+                
+                await update.message.reply_photo(photo=open(screenshot_path, 'rb'), caption=f"📄 **Zusammenfassung:**\n\n{summary[:1000]}")
+                await status_msg.delete()
+            except Exception as e:
+                await status_msg.edit_text(f"Link-Fehler: {str(e)}")
+        return
+
+    # --- FEATURE: NORMALER CHAT ---
     status_msg = await update.message.reply_text("🤖 Überlege...")
     try:
         response = ollama.chat(model='qwen2.5-coder:7b', messages=[
@@ -134,13 +132,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await status_msg.edit_text(f"Ollama Fehler: {str(e)}")
 
+# 3. Main Loop mit Restart-Logik bei Netzwerkfehlern
 if __name__ == '__main__':
     if not TOKEN:
         print("FEHLER: Kein Token in der .env gefunden!")
     else:
-        app = ApplicationBuilder().token(TOKEN).build()
-        app.add_handler(CommandHandler('start', start))
-        app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-        
-        print("Bot läuft... Drücke Strg+C zum Beenden.")
-        app.run_polling()
+        while True:
+            try:
+                print("Bot wird gestartet...")
+                app = ApplicationBuilder().token(TOKEN).build()
+                app.add_handler(CommandHandler('start', start))
+                app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+                
+                print("Bot läuft auf dem M4 Max... Drücke Strg+C zum Beenden.")
+                app.run_polling(close_loop=False)
+            except Exception as e:
+                print(f"Netzwerk-Timeout oder Fehler: {e}")
+                print("Neustart in 10 Sekunden...")
+                import time
+                time.sleep(10)
